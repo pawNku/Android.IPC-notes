@@ -167,7 +167,7 @@ Bundle实现了Parcelable接口，因此可以方便的在不同进程间传输�
 * SP：是xml的键值对 存在大概5M的缓存机制  所以内存中的缓存也导致了高并发凉凉    
 * 所以IPC基本上都不能文件共享 除非低并发    
 
-**4.3 使用Messenger--Handler**   
+**4.3 使用Messenger--Handler串行**   
 > 是一种轻量级的IPC方案底层反手一个AIDL 进行了封装 可以翻译成信使不同进程间传递Message对象   因为是一次处理一次请求的 所以不用考虑线程同步的问题 也因为服务端不存在并发执行的情形   如下像AIDL：因为Imessenger.Stub.asInterface(IBinder)这个就很像传递进Binder最后返回的是客户端用的接口 其实也是个Binder mTarget
 ```
 public Messenger(Handler target){
@@ -224,9 +224,117 @@ public class myService extends Service {
 * 而服务端通过 message.replyTo 来获得对方的Messenger==Messenger Client = msg.replyTo;    
 * 最后：Messenger中有一个 Hanlder 以串行的方式处理队列中的消息。不存在并发执行，因此我们不用考虑线程同步的问题。   
 
-**4.4 使用AIDL**   
+**4.4 使用AIDL--高并发跨进程**   
 > 首先与Messenger不同的是 因为也说过了 M是Handler串行的所以有大量的消息到服务端就凉了 其实M的主要作用就是传递消息   
 * 1.服务端：服务端需要创建Service来监听客户端请求，然后创建一个AIDL文件一定一定一定是在服务端中创建的AIDL文件，将暴露给客户端的接口也就是需要提供的方法在AIDL文件中声明，最后在Service中实现这个AIDL接口即可  也就是实现具体方法的逻辑   
-* 2.客户端：
+* 2.客户端：首先绑定服务端的Service，绑定成功后，将服务端返回的Binder对象通过asInterface转成AIDL接口所属的类型，接着就可以通过这个Binder调用AIDL中的方法了 
+* AIDL文件    
+```
+// IMyAidlInterface.aidl
+package com.example.servicedemo;
 
+// Declare any non-default types here with import statements
+
+interface IMyAidlInterface {
+    /**
+     * 在服务器方创建自定义AIDL 接口
+     */
+    void basicTypes(int anInt, long aLong, boolean aBoolean, float aFloat,
+            double aDouble, String aString);
+
+     //定义自己所需要的方法：显示当前服务的进度
+     /*
+     * 仅将方法定义出来 在接口中不需要实现
+     */
+     void showProgress();
+}
+```    
+> AIDL方法是在服务端的Binder线程池中执行的，因此当多个客户端同时连接时，管理数据的集合直接采用 CopyOnWriteArrayList 来进行自动线程同步  类似的还有 ConcurrentHashMap 
+
+* 远程服务端Service提供的方法的具体实现   
+```
+    //绑定
+    //IBinder：在android中用于远程操作对象的一个基本接口
+    @Override
+    public IBinder onBind(Intent intent) {
+        // TODO: Return the communication channel to the service.
+        Log.e("TAG","服务绑定了");
+        //Binder
+        /**
+         * 通过服务端方的AIDL接口的.Stub来实现具体的逻辑方法
+         */
+        return new IMyAidlInterface.Stub(){
+            @Override
+            public void basicTypes(int anInt, long aLong, boolean aBoolean, float aFloat, double aDouble, String aString) throws RemoteException {
+            }
+
+            @Override
+            public void showProgress() throws RemoteException {
+                Log.e("TAG","当前进度是" + i);
+            }
+        };
+    }
+
+    //对于onBind方法而言，要求返回IBinder对象
+    //实际上，我们会自己定义一个内部类，集成Binder类
+
+    class MyBinder extends Binder{
+        //定义自己需要的方法（实现进度监控）
+        public int getProcess(){
+            return i;
+        }
+    }
+
+    //解绑
+    @Override
+    public boolean onUnbind(Intent intent) {
+        Log.e("TAG","服务解绑了");
+        return super.onUnbind(intent);
+    }
+
+    //摧毁
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        Log.e("TAG","服务销毁了");
+    }
+}
+```    
+
+* 客户端调用服务的具体实现     
+> 绑定远程服务 绑定成功后将Binder对象通过IMyAidlInterface.Stub.asInterface传入转换成aidl接口 就可以调用了
+```
+    ServiceConnection conn = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
+            /**
+             * 1.调用方转移通过AIDL来建立联系从解释权方到调用方中的代理类中的Stub
+             * 2.在调用方也有onServiceConnected方法
+             * 3.通过自定义的IMyAidlInterface接口.Stub也就是通信类.asInterface可以传递进
+             * ServiceDemo中的MyService.java中onBind中通过Stub代理类返回的IBinder可以传递进去
+             * 4.返回的是接口对象
+             * 5.进而调用的是代理类Stub的showProgress方法 实现咯 only代理 完成是在ServiceDemo中的
+             */
+            IMyAidlInterface imai = IMyAidlInterface.Stub.asInterface(iBinder);
+            try {
+                /**
+                 * 拿到AIDL就可以跨进程调用代理的自己定义的方法了.showProgress()
+                 */
+                imai.showProgress();
+            } catch (RemoteException e) {
+                e.printStackTrace();
+            }
+        }
+```
+
+**4.5 使用ContentProvider**      
+> ContentProvider是四大组件之一，天生就是用来进程间通信。和Messenger一样，其底层实现是用Binder。
+
+* 系统预置了许多ContentProvider，比如通讯录、日程表等。要RPC访问这些信息，只需要通过ContentResolver的query、update、insert和delete方法即可。
+
+* 创建自定义的ContentProvider，只需继承ContentProvider类并实现 onCreate 、 query 、 update 、 insert 、 getType 六个抽象方法即可。getType用来返回一个Uri请求所对应的MIME类型，剩下四个方法对应于CRUD操作。这六个方法都运行在ContentProvider进程中，除了 onCreate 由系统回调并运行在主线程里，其他五个方法都由外界调用并运行在Binder线程池中。
+
+* ContentProvider是通过Uri来区分外界要访问的数据集合，例如外界访问ContentProvider中的表，我们需要为它们定义单独的Uri和Uri_Code。根据Uri_Code，我们就知道要访问哪个表了。
+
+* query、update、insert、delete四大方法存在多线程并发访问，因此方法内部要做好线程同步。若采用SQLite并且只有一个SQLiteDatabase，SQLiteDatabase内部已经做了同步处理。若是多个SQLiteDatabase或是采用List作为底层数据集，就必须做线程同步。
 
