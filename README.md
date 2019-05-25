@@ -97,3 +97,136 @@ name = in.readString();
 }
 ```
 **2.3 对比**
+> 1.平台的不同 S是java自带的序列化接口 而P是Android的序列化接口   
+2.原理的不同  S将一个对象变成可传输的状态 而P是将其分解 然后分成序列化对象Parcel和数组 每部分都支持可传递的数据
+3.S是简单但是效率低代价大 因为ObjectInputStream过程需要大量的IO操作 但是P也麻烦 但是高效    
+4.S适合存储到设备sd卡 或者序列化通过网络存储 而P是主要用在内存的序列化上    
+
+### 3. Binder
+> Binder是Android中的一个类，实现了 IBinder 接口。1.跨进程通信方式 2.各种Manager和ManagerService的桥梁 3.CS的桥梁 也就是AIDL类似于了   
+1.从IPC角度说，Binder是Andoird的一种跨进程通讯方式。    
+2.从Android Framework角度来说，Binder是 ServiceManager 连接各种Manager(ActivityManager·、WindowManager)和相应ManagerService的桥梁       
+3.从Android应用层来说，Binder是客户端和服务端进行通信的媒介，当bindService时，服务端返回一个包含服务端业务调用的Binder对象，通过这个Binder对象，客户端就可以获取服务器端提供的服务或者数据（ 包括普通服务和基于AIDL的服务）     
+
+**3.1 具体解释**     
+![图片](http://gityuan.com/images/binder/prepare/IPC-Binder.jpg)    
+* 如图所示
+> 1.在Android Framework也就是框架层 可以看见是连接各种SM的桥梁    
+  2.在Android应用层  可以看见是连接CS的桥梁   
+* 具体解释   
+> 1.首先组件方面 包括：Client、Server的CS家走 其次是SM各种用来在框架层连接AM的 最后还要个binder驱动就是刚刚连接用的桥梁 SM是用来提供服务的   
+  2.虚线：因为C/S和SM其实明显都不是直接交互的 要不然要Binder驱动干嘛    
+  3.层次：C/S、SM是在用户控件的也就是应用层和框架层的  而Binder驱动 却是内核控件     
+  4.开发人员只需要自定义client、server端 借助上面安卓的自带的SM和Binder也就是Android平台层就可以进行IPC通信了    
+  
+**3.2 由系统根据AIDL文件自动生成.java文件**    
+* Book.java:定义了图书信息的实体类 并且实现Parcelable接口    
+* Book.aidl：Bookai AIDL中的声明
+* IBookManager.aidl：！用户自定义的一个管理管理管理Book类的一个接口  里面一般都是空的接口方法 但是依旧要导入Book类    
+* IBookManager.java：！自动生成的生成的生成的  系统为我们哈哈是个.java文件 这就是aidl的好处    
+> IBookManager.java继承了 IInterface 接口  所以的在Binder中传输的接口这里就是管理类都得继承IInterface 接口   
+  1.不仅声明了getBookList 和 addBook 方法，还声明了两个整型id分别标识这两个方法 用于在onTransact中标识客户端到底请求哪个方法   
+  2.声明了一个Stub类就是Binder类 当CS在同一进程 则不会走跨进程的 transact 不同进程 则走跨进程的 transact 逻辑由里面的Proxy代理类来完成   
+  3.接口的核心实现 由内部的Stub和Proxy实现     
+  
+**3.3 Stub和Proxy类的内部方法和定义**    
+![图片](http://upload-images.jianshu.io/upload_images/1944615-3c92d9d160957e78.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)      
+
+```
+ServiceConnection conn = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
+        IMyAidlInterface imai = IMyAidlInterface.Stub.asInterface(iBinder); 
+        /**
+         * 拿到AIDL就可以跨进程调用代理的自己定义的方法了.showProgress()
+         */
+        imai.showProgress();
+```    
+* asInterface：在客户端最后解析数据的！ 也就是Bindert-->Clien 通过Binder对象传入并且转换为客户端所需的AIDL接口类型的对象 拿到这个aidl就可以也就是返回的Stub对象本身 也就是接口可以调用自己的方法了showProgress()  真正的实现在ServiceDemo中   
+* onTransact：用来回头的！ 也就是Servver-->Binder这个方法运行在服务端的Binder线程池中，由客户端发起跨进程请求时，远程请求会通过系统底层封装后交由此方法来处理。该方法的原型是 `public Boolean onTransact(int code,Parcelable data,Parcelable reply,int flags)` 
+> 可以发现首先通过code来确定客户端调用了哪个方法 从data中取数据执行方法 ok后通过reply写入返回值再通过asBinder返回Binder对象也就是各种Stub哦 这样就完成了回头了  最后的flag是boolean看看是不是请求失败了哦   
+* ！！！整体来回：首先在客户端创建各种Pacel序列化输入输出的对象然后把这些参数信息写进data  然后通过data读取要执行哪个方法 通过onTransact在服务端中会调用方法 最后在线程池中写入结果到reply中 最后通过asBinder返回成Binder对象 最后在客服端的asInterface把这个Binder传递进入转换成客户端用的aidl接口获取数据    
+* ps：AIDL文件不是必须的，之所以提供AIDL文件，是为了方便系统为我们生成IBookManager.java，但我们完全可以自己写一个但是我就是不写哎~
+     
+### 4. Android中的IPC方式   
+> 主要有以下方式：    
+Intent中附加extras-Bundle   
+共享文件   
+Binder   
+ContentProvider   
+Socket   
+
+**4.1 使用Bundle--Intent中**   
+> 四大组件中的三大组件（ Activity、Service、Receiver） 都支持在Intent中传递 Bundle 数据   
+Bundle实现了Parcelable接口，因此可以方便的在不同进程间传输。当我们在一个进程中启动了另一个进程的Activity、Service、Receiver，可以再Bundle中附加我们需要传输给远程进程的消息并通过Intent发送出去。被传输的数据必须能够被序列化   
+
+**4.2 使用文件共享--低并发**   
+> 有点神类似S我们可以序列化一个对象到文件系统中的同时从另一个进程中恢复这个对象   
+* 通过 ObjectOutputStream / ObjectInputStream 序列化一个对象到文件中，或者在另一个进程从文件中反序列这个对象。注意：反序列化得到的对象只是内容上和序列化之前的对象一样，本质是两个对象。其中是IS还是OS是针对内存来说的哦   读到sd卡的话通过小车byte[]数组按len来搞   
+* 问题所在 因为不是及时的 所以大量的并发不适合对数据同步的处理凉凉    
+* SP：是xml的键值对 存在大概5M的缓存机制  所以内存中的缓存也导致了高并发凉凉    
+* 所以IPC基本上都不能文件共享 除非低并发    
+
+**4.3 使用Messenger--Handler**   
+> 是一种轻量级的IPC方案底层反手一个AIDL 进行了封装 可以翻译成信使不同进程间传递Message对象   因为是一次处理一次请求的 所以不用考虑线程同步的问题 也因为服务端不存在并发执行的情形   如下像AIDL：因为Imessenger.Stub.asInterface(IBinder)这个就很像传递进Binder最后返回的是客户端用的接口 其实也是个Binder mTarget
+```
+public Messenger(Handler target){
+    mTarget = target.getImessenger();  //都是Binder这里的mTarget 通过Handler
+}
+public Messenger(IBinder target){
+    mTarget = Imessenger.Stub.asInterface(target);   //通过Binder返回Binder 极像AIDL
+}
+```
+![图片](https://img-blog.csdn.net/20160828161207521)        
+* 具体使用时，分为服务端和客户端两大流程：    
+> 1.服务端：创建一个Service来处理客户端请求，同时创建一个Handler并通过它来创建一个Messenger，`private final Messenger mMessenger = new Messenger (new xxxHandler());` 类似于上面的构造方法一  然后再Service的onBind中通过Messenger.getBinder返回Messenger对象底层的Binder即可     
+```
+//示例服务端代码  1.Handler 2.Messenger 3.Binder
+public class myService extends Service {
+    private static class myHandler extends Handler{
+        public void handleMessage(Message msg){}   //用来处理客户端消息的
+    }
+    private final Messenger mMessenger = new Messenger (new xxxHandler());   //与myHandler相关联没有Handler就没有mMessenger
+    
+    public IBinder onBind(Intent intent){
+       return mMessenger.getBinder();     //与mMessenger相关联没有mMessenger就没有IBinder对象用来最终返回给客户端的
+    }
+}
+```
+> 2.客户端：绑定服务端的Sevice==IBinder对象，利用服务端返回的IBinder对象来创建一个Messenger，通过这个Messenger就可以向服务端发送消息了，消息类型是 Message    
+> 如果需要服务端响应，则需要创建一个Handler并在内部来创建一个Messenger（ 和服务端一样） ，并通过 Message 的 replyTo 参数传递给服务端 服务端通过Message的 replyTo 参数就可以回应客户端了
+```
+//1.简单的不需要响应 iBinder就是服务端返回的Service绑定
+public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
+    mMessenger = new Messenger(service);   //1.1 利用服务端返回的IBinder对象来创建一个Messenger
+    Message msg = Message.obtain();    //1.2创建一个传递的消息类型msg 都是事先了Parcelable接口的
+    Bundle data...data.putString...msg.setData    //Bundle支持大量的数据类型
+    mMessenger.send(msg);    //1.3通过msg来给服务端发消息
+}
+
+//2.服务端不仅接受 还要提供响应
+//2.1服务端的修改
+public class myService extends Service {
+    private static class myHandler extends Handler{
+        public void handleMessage(Message msg){
+           Messenger Client = msg.replyTo;   //服务端中通过 message.replyTo 来获得对方的Messenger
+           Message msg = Message.obtain();
+           Bundle data...data.putString...msg.setData 
+           Client.send(msg); 
+        }   
+    }
+    ...
+}
+```
+
+* 总而言之，就是客户端和服务端 拿到对方的Messenger来发送 Message .send(msg);    
+* 只不过客户端通过bindService==也就是`mMessenger = new Messenger(service); 此处的service就是Binder对象`    
+* 而服务端通过 message.replyTo 来获得对方的Messenger==Messenger Client = msg.replyTo;    
+* 最后：Messenger中有一个 Hanlder 以串行的方式处理队列中的消息。不存在并发执行，因此我们不用考虑线程同步的问题。   
+
+**4.4 使用AIDL**   
+> 首先与Messenger不同的是 因为也说过了 M是Handler串行的所以有大量的消息到服务端就凉了 其实M的主要作用就是传递消息   
+* 1.服务端：服务端需要创建Service来监听客户端请求，然后创建一个AIDL文件一定一定一定是在服务端中创建的AIDL文件，将暴露给客户端的接口也就是需要提供的方法在AIDL文件中声明，最后在Service中实现这个AIDL接口即可  也就是实现具体方法的逻辑   
+* 2.客户端：
+
+
